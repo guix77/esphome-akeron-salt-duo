@@ -13,7 +13,7 @@ namespace akeron {
 // ──────────────────────────────────────────────────────────────────────────────
 
 void AkeronComponent::setup() {
-  // Nothing to do here — the BLE client parent manages connection.
+  this->publish_connection_status_("Disconnected");
 }
 
 void AkeronComponent::dump_config() {
@@ -35,9 +35,11 @@ void AkeronComponent::dump_config() {
   LOG_BINARY_SENSOR("  ", "Cover Active",    cover_active_);
   LOG_BINARY_SENSOR("  ", "Flow Switch",     flow_switch_);
   LOG_BINARY_SENSOR("  ", "Boost Active",    boost_active_);
-  LOG_TEXT_SENSOR("  ", "Alarm ELX",       alarm_elx_);
-  LOG_TEXT_SENSOR("  ", "Alarm Regulator", alarm_regulator_);
-  LOG_TEXT_SENSOR("  ", "Warning",         warning_);
+  LOG_TEXT_SENSOR("  ", "Alarm ELX",         alarm_elx_);
+  LOG_TEXT_SENSOR("  ", "Alarm Regulator",   alarm_regulator_);
+  LOG_TEXT_SENSOR("  ", "Warning",           warning_);
+  LOG_TEXT_SENSOR("  ", "Connection Status", connection_status_);
+  LOG_SENSOR("  ", "Last Update", last_update_);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -73,6 +75,7 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
       ESP_LOGI(TAG, "Connected to Akeron BLE device");
       memcpy(this->remote_bda_, param->open.remote_bda, sizeof(esp_bd_addr_t));
       this->rx_len_ = 0;
+      this->publish_connection_status_("Connecting");
       break;
     }
 
@@ -142,6 +145,7 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
       }
       ESP_LOGI(TAG, "Subscribed to Akeron indications");
       this->node_state = espbt::ClientState::ESTABLISHED;
+      this->publish_connection_status_("Connected");
       this->on_subscribed_();
       break;
     }
@@ -170,6 +174,9 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
       this->char_handle_ = 0;
       this->rx_len_      = 0;
       this->node_state   = espbt::ClientState::IDLE;
+      this->publish_connection_status_("Disconnected");
+      // Cancel pending watchdog — no point firing it after disconnect
+      this->cancel_timeout("watchdog");
       this->mark_unavailable_();
       break;
     }
@@ -194,6 +201,8 @@ void AkeronComponent::on_subscribed_() {
     ESP_LOGD(TAG, "Delaying first poll by %u ms (boot guard)", delay_ms);
   }
   this->set_timeout("first_poll", delay_ms, [this]() { this->update(); });
+  // Arm the stale-data watchdog
+  this->reset_watchdog_();
 }
 
 void AkeronComponent::send_request_(uint8_t mnemo) {
@@ -255,7 +264,12 @@ void AkeronComponent::parse_buffer_() {
 
 void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
   uint8_t mnemo = frame[1];
-  ESP_LOGV(TAG, "Received frame mnemo=0x%02X (%c)", mnemo, mnemo);
+  this->frame_count_++;
+  if (this->last_update_ != nullptr) {
+    this->last_update_->publish_state((float) this->frame_count_);
+  }
+  this->reset_watchdog_();
+  ESP_LOGV(TAG, "Received frame mnemo=0x%02X (%c) count=%u", mnemo, mnemo, this->frame_count_);
 
   switch (mnemo) {
     case MNEMO_M: {
@@ -287,6 +301,12 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
     }
 
     case MNEMO_A: {
+      // Raw dump helps debug the boost_duration offset (known overlap issue with byte[2])
+      ESP_LOGD(TAG,
+               "Trame A raw: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+               frame[0], frame[1], frame[2], frame[3], frame[4], frame[5], frame[6],
+               frame[7], frame[8], frame[9], frame[10], frame[11], frame[12],
+               frame[13], frame[14], frame[15], frame[16]);
       auto a = parse_trame_a(frame);
       this->raw_field_a10_ = a.raw_byte10;
       if (elx_production_)        elx_production_->publish_state((float) a.elx_production);
@@ -306,20 +326,49 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
 }
 
 void AkeronComponent::mark_unavailable_() {
-  // Numeric sensors: there's no "unavailable" publish in ESPHome sensor API,
-  // but not publishing keeps the last value. We just log a warning.
-  // Text sensors can publish a meaningful "unavailable" string.
-  ESP_LOGW(TAG, "BLE disconnected — sensor values are stale");
-  if (alarm_elx_)       alarm_elx_->publish_state("unavailable");
-  if (alarm_regulator_) alarm_regulator_->publish_state("unavailable");
-  if (warning_)         warning_->publish_state("unavailable");
-  // Binary sensors
+  ESP_LOGW(TAG, "BLE disconnected — marking all sensors unavailable");
+
+  // Numeric sensors: publish NaN → HA shows "Unavailable"
+  if (ph_)              ph_->publish_state(NAN);
+  if (redox_)           redox_->publish_state(NAN);
+  if (temperature_)     temperature_->publish_state(NAN);
+  if (salt_)            salt_->publish_state(NAN);
+  if (ph_setpoint_)     ph_setpoint_->publish_state(NAN);
+  if (redox_setpoint_)  redox_setpoint_->publish_state(NAN);
+  if (elx_production_)  elx_production_->publish_state(NAN);
+  if (boost_duration_)  boost_duration_->publish_state(NAN);
+
+  // Text sensors
+  if (alarm_elx_)       alarm_elx_->publish_state("Unavailable");
+  if (alarm_regulator_) alarm_regulator_->publish_state("Unavailable");
+  if (warning_)         warning_->publish_state("Unavailable");
+
+  // Binary sensors — default to off (safe state)
   if (ph_pump_active_)  ph_pump_active_->publish_state(false);
   if (elx_active_)      elx_active_->publish_state(false);
   if (pumps_forced_)    pumps_forced_->publish_state(false);
   if (cover_active_)    cover_active_->publish_state(false);
   if (flow_switch_)     flow_switch_->publish_state(false);
   if (boost_active_)    boost_active_->publish_state(false);
+}
+
+void AkeronComponent::reset_watchdog_() {
+  // If no valid trame is received for 5 minutes while supposedly connected,
+  // force a BLE disconnect so the ble_client reconnect cycle kicks in.
+  this->set_timeout("watchdog", 5 * 60 * 1000, [this]() {
+    if (!this->is_connected_()) return;
+    ESP_LOGW(TAG, "Watchdog: no valid trame for 5 min — forcing BLE reconnect");
+    this->publish_connection_status_("Disconnected");
+    this->mark_unavailable_();
+    esp_ble_gattc_close(this->parent()->get_gattc_if(), this->parent()->get_conn_id());
+    this->char_handle_ = 0;
+  });
+}
+
+void AkeronComponent::publish_connection_status_(const char *status) {
+  if (this->connection_status_ != nullptr) {
+    this->connection_status_->publish_state(status);
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

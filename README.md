@@ -163,49 +163,164 @@ to resume. The state is read back from the device after every poll cycle.
 
 | Entity | SALT | REGUL pH | REGUL3 | REGUL4 Rx |
 |---|:---:|:---:|:---:|:---:|
-| `ph` | | ✓ | ✓ | ✓ |
-| `ph_setpoint` | | ✓ | ✓ | ✓ |
+| `ph` sensor/number | | ✓ | ✓ | ✓ |
+| `ph_setpoint` sensor | | ✓ | ✓ | ✓ |
 | `ph_pump_active` | | ✓ | ✓ | ✓ |
 | `alarm_regulator` | | ✓ | ✓ | ✓ |
 | `temperature` | | | ✓ | ✓ |
 | `salt` | | | ✓ | ✓ |
-| `redox` | | | | ✓ |
-| `redox_setpoint` | | | | ✓ |
-| `elx_production` | ✓ | ✓ | ✓ | ✓ |
+| `redox` sensor | | | | ✓ |
+| `redox_setpoint` sensor | | | | ✓ |
+| `elx_production` sensor/number | ✓ | ✓ | ✓ | ✓ |
 | `boost_duration` | ✓ | ✓ | ✓ | ✓ |
 | `boost_active` | ✓ | ✓ | ✓ | ✓ |
 | `elx_active` | ✓ | ✓ | ✓ | ✓ |
 | `flow_switch` | ✓ | ✓ | ✓ | ✓ |
+| `cover_force` switch | ✓ | ✓ | ✓ | ✓ |
 | `alarm_elx` | ✓ | ✓ | ✓ | ✓ |
 | `warning` | ✓ | ✓ | ✓ | ✓ |
+| `connection_status` (diag) | ✓ | ✓ | ✓ | ✓ |
+| `last_update` (diag) | ✓ | ✓ | ✓ | ✓ |
+
+---
+
+## Alarm code reference
+
+### Electrolysis alarms (`alarm_elx`)
+
+| Code | Message |
+|---|---|
+| OK | No alarm |
+| E.01 | Electrode short-circuit or scaled |
+| E.02 | Salt or water temperature fault |
+| E.03 | Electrode worn or disconnected |
+| E.04 | Electrical short-circuit |
+| E.06 | Device overtemperature |
+| E.07 | No water flow |
+
+### Regulator alarms (`alarm_regulator`) — REGUL pH / REGUL3 / REGUL4 only
+
+| Code | Message |
+|---|---|
+| OK | No alarm |
+| E.10 | pH probe read error (< 5.2 or > 9.5) |
+| E.11 | pH stagnant despite injections |
+| E.13 | pH below alarm threshold (< 6.0) |
+| E.14 | pH above alarm threshold (> 9.0) |
+| E.15 | pH correction inverted |
+| E.18 | Water temperature too low (< 12°C) |
+| E.19 | Salt level too low (< 2.0 g/L) |
+| E.20 | Redox too high (> 950 mV) |
+| E.21 | Redox low (< 350 mV) |
+| E.22 | Redox too low (< 250 mV) |
+
+> **Note:** the mapping from raw nibble to E.xx code for regulator alarms is
+> estimated from CORELEC documentation. If you observe incorrect decoding,
+> open an issue with the raw frame bytes from DEBUG logs.
+
+---
+
+## Known limitations
+
+### Boost duration (byte overlap)
+
+Byte[2] of trame A encodes **ELX production %** (confirmed correct). The same
+byte is also the MSB of a uint16 that was supposed to encode **boost duration**
+in minutes. This creates a conflict: when production is non-zero, the derived
+uint16 is garbage (e.g. 17920 when production = 70%).
+
+**Current workaround:** any boost_duration value ≥ 480 min (8 h) is silently
+replaced with 0. Boost_active is only true when 0 < boost_duration < 480.
+
+To help resolve this, enable DEBUG logs, activate boost from the physical Akeron
+panel, and look for the `Trame A raw:` log line. Share the raw bytes in an
+issue so the correct offset can be identified.
 
 ---
 
 ## Troubleshooting
 
+**ESP32 overheating / brownout**
+
+The ESP32 at 240 MHz with simultaneous WiFi + BLE can draw enough current to
+cause a brownout on boards with a weak USB cable or power supply.
+
+Mitigations (apply all for best results):
+1. Use a quality USB cable (thick wire, rated ≥ 1 A) or a dedicated 5 V power supply.
+2. Reduce CPU frequency to 160 MHz in your YAML:
+   ```yaml
+   esp32:
+     framework:
+       type: esp-idf
+       sdkconfig_options:
+         CONFIG_ESP32_DEFAULT_CPU_FREQ_160: "y"
+         CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "n"
+   ```
+3. Disable continuous BLE scanning (scanner stops once connected):
+   ```yaml
+   esp32_ble_tracker:
+     scan_parameters:
+       continuous: false
+       active: false
+   ```
+4. Increase `update_interval` to `60s` or more.
+5. Delay the first BLE poll — the component already does this automatically
+   (10 s after boot) to let WiFi stabilise first.
+
 **Device not found during BLE scan**
-- The ESP32 must be within ~5–10 m of the Akeron (BLE range). Walls and water
-  reduce range significantly.
-- The Akeron must be powered on and not already connected to another BLE client
-  (it supports only one connection at a time).
+- The ESP32 must be within ~5–10 m of the Akeron (BLE range). Walls, a full
+  pool, and other RF sources reduce range significantly.
+- The Akeron only supports **one simultaneous BLE connection**. If the nRF
+  Connect app (or another device) is already connected, the ESP32 cannot connect.
 - Try restarting both the ESP32 and the Akeron.
 
-**Connected but no data**
-- Check that the MAC address in your YAML matches your device exactly.
-- Enable `DEBUG` log level and look for frame parsing messages.
-- Verify the Akeron firmware version supports the protocol described here
-  (tested on CORELEC firmware v1.x).
+**Connected but no data / `connection_status` stuck at "Connecting"**
+- Check the MAC address in your YAML exactly matches your Akeron.
+- Enable `DEBUG` log level: `logger: level: DEBUG`. Look for `Trame A raw:` lines.
+- If no raw frames appear but the device is connected, check that the Akeron
+  firmware supports the protocol described here (tested on CORELEC v1.x).
+- The component has a 5-minute watchdog: if no valid frame is received, it
+  forces a BLE reconnect automatically.
+
+**Values stuck / sensor showing "Unavailable" in HA**
+- The `last_update` diagnostic counter stops incrementing → BLE data stopped.
+- On disconnect all numeric sensors publish NaN (→ "Unavailable" in HA) and
+  text sensors show "Unavailable". This is intentional — stale data is hidden.
+- Check `connection_status`: if "Disconnected", the ble_client will reconnect
+  automatically within a few seconds.
 
 **Values jump or seem wrong**
-- The component filters out-of-range values (e.g. pH outside 3.50–9.50),
+- The component filters out-of-range values (pH outside 3.50–9.50, etc.),
   so spurious spikes are discarded automatically.
-- If `boost_duration` and `elx_production` seem inconsistent, see the note in
-  the protocol spec — they share byte[2] of trame A.
+- See the Boost Duration section above for the known byte[2] overlap issue.
 
 **BLE connection drops frequently**
-- Increase `update_interval` (e.g. `60s`) to reduce BLE traffic.
-- Ensure no other BLE client (phone app, etc.) is trying to connect
-  simultaneously.
+- Use `update_interval: 60s` — polling every 30 s generates more BLE traffic.
+- Ensure no other BLE client (phone app, etc.) tries to connect simultaneously.
+- Add `esp32_ble_tracker: scan_parameters: continuous: false`.
+
+---
+
+## Changelog
+
+### Phase 3 (current)
+- Full alarm code decoding with CORELEC E.xx messages
+- Diagnostic sensors: `connection_status`, `last_update` (frame counter)
+- All sensors publish NaN (→ "Unavailable" in HA) on BLE disconnect
+- 5-minute watchdog: forces BLE reconnect if no frame received while connected
+- CPU frequency 160 MHz recommendation to reduce heat
+- Raw trame A logging at DEBUG level to help debug boost_duration
+
+### Phase 2
+- Write commands: pH setpoint, ELX production %, cover force switch
+- Number entities for writable controls
+- Post-write poll (1 s delay) to confirm written values
+
+### Phase 1
+- Initial BLE read-only component
+- Sensors: pH, redox, temperature, salt, setpoints, ELX production, boost
+- Binary sensors: pumps, cover, flow switch, boost active
+- Text sensors: alarm ELX, alarm regulator, warning
 
 ---
 

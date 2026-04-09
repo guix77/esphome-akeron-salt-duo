@@ -55,9 +55,13 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_warning(text_sensor::TextSensor *s)         { warning_ = s; }
 
   // ── Writable control setters ─────────────────────────────────────────────────
-  void set_ph_setpoint_number(AkeronPhSetpointNumber *n)    { ph_setpoint_number_ = n; }
+  void set_ph_setpoint_number(AkeronPhSetpointNumber *n)       { ph_setpoint_number_ = n; }
   void set_elx_production_number(AkeronElxProductionNumber *n) { elx_production_number_ = n; }
-  void set_cover_force_switch(AkeronCoverForceSwitch *s)    { cover_force_switch_ = s; }
+  void set_cover_force_switch(AkeronCoverForceSwitch *s)       { cover_force_switch_ = s; }
+
+  // ── Diagnostic sensor setters ────────────────────────────────────────────────
+  void set_connection_status(text_sensor::TextSensor *s) { connection_status_ = s; }
+  void set_last_update(sensor::Sensor *s)                { last_update_ = s; }
 
   // ── Write commands (called by number/switch control() / write_state()) ───────
   void write_ph_setpoint(float value);
@@ -87,6 +91,9 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   // ── Last raw byte[10] from trame A (needed for cover_force command) ───────────
   uint8_t raw_field_a10_{0xFF};
 
+  // ── Diagnostics ───────────────────────────────────────────────────────────────
+  uint32_t frame_count_{0};  // total valid frames received since boot
+
   // ── Internal methods ─────────────────────────────────────────────────────────
   bool is_connected_() {
     return this->parent() != nullptr && this->char_handle_ != 0;
@@ -98,6 +105,8 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void parse_buffer_();
   void dispatch_frame_(const uint8_t *frame);
   void mark_unavailable_();
+  void reset_watchdog_();
+  void publish_connection_status_(const char *status);
 
   // ── Read-only sensors ─────────────────────────────────────────────────────────
   sensor::Sensor *ph_{nullptr};
@@ -126,6 +135,10 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   AkeronPhSetpointNumber    *ph_setpoint_number_{nullptr};
   AkeronElxProductionNumber *elx_production_number_{nullptr};
   AkeronCoverForceSwitch    *cover_force_switch_{nullptr};
+
+  // ── Diagnostic sensors ────────────────────────────────────────────────────────
+  text_sensor::TextSensor *connection_status_{nullptr};
+  sensor::Sensor          *last_update_{nullptr};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

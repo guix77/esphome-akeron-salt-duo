@@ -11,6 +11,11 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf  # Required for reliable BLE client
+    sdkconfig_options:
+      # Run at 160 MHz instead of 240 MHz — reduces heat significantly.
+      # BLE + WiFi still work fine at 160 MHz.
+      CONFIG_ESP32_DEFAULT_CPU_FREQ_160: "y"
+      CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "n"
 
 logger:
 
@@ -61,6 +66,8 @@ sensor:
       name: "Electrolysis Production"
     boost_duration:
       name: "Boost Duration"
+    last_update:
+      name: "Frames Received"  # diagnostic — counter, increments on each valid BLE frame
     # --- Uncomment for REGUL3 / REGUL4 models ---
     # temperature:
     #   name: "Water Temperature"
@@ -95,6 +102,8 @@ text_sensor:
       name: "Regulator Alarm"
     warning:
       name: "Warning"
+    connection_status:
+      name: "BLE Connection"  # diagnostic — shows Connected / Connecting / Disconnected
 
 # Writable controls — expose these to set values from Home Assistant
 # Note: if you use the number entities, the read-only sensor equivalents

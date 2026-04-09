@@ -4,6 +4,7 @@ from esphome.components import sensor
 from esphome.const import (
     CONF_ID,
     DEVICE_CLASS_TEMPERATURE,
+    ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     UNIT_CELSIUS,
     ICON_THERMOMETER,
@@ -22,6 +23,7 @@ CONF_PH_SETPOINT    = "ph_setpoint"
 CONF_REDOX_SETPOINT = "redox_setpoint"
 CONF_ELX_PRODUCTION = "elx_production"
 CONF_BOOST_DURATION = "boost_duration"
+CONF_LAST_UPDATE    = "last_update"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -76,6 +78,11 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:timer-outline",
         ),
+        cv.Optional(CONF_LAST_UPDATE): sensor.sensor_schema(
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:counter",
+        ),
     }
 )
 
@@ -114,3 +121,7 @@ async def to_code(config):
     if CONF_BOOST_DURATION in config:
         s = await sensor.new_sensor(config[CONF_BOOST_DURATION])
         cg.add(parent.set_boost_duration(s))
+
+    if CONF_LAST_UPDATE in config:
+        s = await sensor.new_sensor(config[CONF_LAST_UPDATE])
+        cg.add(parent.set_last_update(s))

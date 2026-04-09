@@ -67,51 +67,69 @@ inline void build_request(uint8_t mnemo, uint8_t out[6]) {
 
 // ─── Alarm text maps ──────────────────────────────────────────────────────────
 
-/// Electrolysis alarm codes (byte [10] of trame M, low nibble of trame A byte [12])
+// ─── Alarm text maps ──────────────────────────────────────────────────────────
+// Alarm codes are raw nibble values (0–15) from the GATT frame.
+// Their mapping to CORELEC E.xx display codes is based on documentation;
+// nibble-to-E.xx correspondence is confirmed for ELX, estimated for regulator.
+
+/// ELX alarm codes — trame M byte[10] (full byte) and trame A byte[12] low nibble.
 inline const char *alarm_elx_text(uint8_t code) {
   switch (code) {
     case 0: return "OK";
-    case 1: return "E.01 electrode short/scale";
-    case 2: return "E.02 salt or temperature out of range";
-    case 3: return "E.03 electrode worn";
-    case 4: return "E.04 electrical fault";
-    case 6: return "E.06 overtemperature";
-    case 7: return "E.07 no flow";
-    default: return "E.?? unknown alarm";
+    case 1: return "E.01 Electrode short-circuit or scaled";
+    case 2: return "E.02 Salt or water temperature fault";
+    case 3: return "E.03 Electrode worn or disconnected";
+    case 4: return "E.04 Electrical short-circuit";
+    case 6: return "E.06 Device overtemperature";
+    case 7: return "E.07 No water flow";
+    default: {
+      // Return a static buffer with the raw code for unknown values
+      static char buf[24];
+      snprintf(buf, sizeof(buf), "E.?? Unknown alarm (%u)", code);
+      return buf;
+    }
   }
 }
 
-/// Regulator alarm codes (high nibble of trame M byte [11])
+/// Regulator alarm codes — trame M byte[11] high nibble (4 bits, 0–15).
+// Mapping nibble → CORELEC E.xx is estimated from documentation; verify on hardware.
+// Not all E.xx codes are present (E.12, E.16, E.17 are absent from the spec list).
 inline const char *alarm_rdx_text(uint8_t code) {
   switch (code) {
     case 0:  return "OK";
-    case 1:  return "E.10 pH probe fault";
-    case 2:  return "E.11 pH low alarm";
-    case 3:  return "E.12 pH high alarm";
-    case 4:  return "E.13 redox probe fault";
-    case 5:  return "E.14 redox low alarm";
-    case 6:  return "E.15 redox high alarm";
-    case 7:  return "E.16 pH pump timeout";
-    case 8:  return "E.17 redox pump timeout";
-    case 9:  return "E.18 no flow (regulator)";
-    case 10: return "E.19 temperature fault";
-    case 11: return "E.20 salt fault";
-    case 12: return "E.21 communication error";
-    case 13: return "E.22 configuration error";
-    default: return "E.?? unknown alarm";
+    case 1:  return "E.10 pH probe read error (< 5.2 or > 9.5)";
+    case 2:  return "E.11 pH stagnant despite injections";
+    case 3:  return "E.13 pH below alarm threshold (< 6.0)";
+    case 4:  return "E.14 pH above alarm threshold (> 9.0)";
+    case 5:  return "E.15 pH correction inverted";
+    case 6:  return "E.18 Water temperature too low (< 12°C)";
+    case 7:  return "E.19 Salt level too low (< 2.0 g/L)";
+    case 8:  return "E.20 Redox too high (> 950 mV)";
+    case 9:  return "E.21 Redox low (< 350 mV)";
+    case 10: return "E.22 Redox too low (< 250 mV)";
+    default: {
+      static char buf[28];
+      snprintf(buf, sizeof(buf), "E.?? Unknown alarm (%u)", code);
+      return buf;
+    }
   }
 }
 
-/// Warning status (low nibble of trame M byte [11])
+/// Warning status — trame M byte[11] low nibble (4 bits, 0–15).
+// Warning codes are informational; they do not stop operation.
 inline const char *warning_text(uint8_t code) {
   switch (code) {
     case 0: return "OK";
-    case 1: return "W.01 pH drift";
-    case 2: return "W.02 redox drift";
-    case 3: return "W.03 low salt";
-    case 4: return "W.04 high salt";
-    case 5: return "W.05 low temperature";
-    default: return "W.?? unknown warning";
+    case 1: return "W.01 pH drift detected";
+    case 2: return "W.02 Redox drift detected";
+    case 3: return "W.03 Salt level low";
+    case 4: return "W.04 Salt level high";
+    case 5: return "W.05 Water temperature low";
+    default: {
+      static char buf[28];
+      snprintf(buf, sizeof(buf), "W.?? Unknown warning (%u)", code);
+      return buf;
+    }
   }
 }
 
