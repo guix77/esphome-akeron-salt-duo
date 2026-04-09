@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 namespace esphome {
 namespace akeron {
@@ -202,6 +203,7 @@ struct TrameA {
   bool     cover_forced;    // byte [10] bit 3
   bool     flow_switch;     // byte [10] bit 2
   uint8_t  alarm_elx;       // byte [12] low nibble
+  uint8_t  raw_byte10;      // byte [10] verbatim — needed by cover_force command
 };
 
 inline TrameA parse_trame_a(const uint8_t *f) {
@@ -215,11 +217,55 @@ inline TrameA parse_trame_a(const uint8_t *f) {
   a.boost_duration = (raw_boost < BOOST_DURATION_MAX) ? raw_boost : 0;
   a.boost_active   = (a.boost_duration > 0);
 
+  a.raw_byte10     = f[10];
   a.cover_active   = (f[10] >> 4) & 1;
   a.cover_forced   = (f[10] >> 3) & 1;
   a.flow_switch    = (f[10] >> 2) & 1;
   a.alarm_elx      = f[12] & 0x0F;
   return a;
+}
+
+// ─── Write command builders ───────────────────────────────────────────────────
+// All commands are 17-byte frames. Unused payload bytes = 0xFF ("don't change").
+
+static const uint8_t CMD_FRAME_LEN = 17;
+
+/// pH setpoint command (trame S, mnemo=83).
+/// consigne: e.g. 7.35 → bytes[2..3] = 735 big-endian.
+inline void build_command_ph_setpoint(float consigne, uint8_t out[CMD_FRAME_LEN]) {
+  memset(out, 0xFF, CMD_FRAME_LEN);
+  out[0] = FRAME_MARKER;
+  out[1] = MNEMO_S;
+  uint16_t val = (uint16_t) roundf(consigne * 100.0f);
+  out[2] = (val >> 8) & 0xFF;
+  out[3] = val & 0xFF;
+  out[15] = calc_crc(out, 15);
+  out[16] = FRAME_MARKER;
+}
+
+/// ELX production command (trame A, mnemo=65).
+/// percent: 0–100, step 10.
+inline void build_command_elx_production(uint8_t percent, uint8_t out[CMD_FRAME_LEN]) {
+  memset(out, 0xFF, CMD_FRAME_LEN);
+  out[0] = FRAME_MARKER;
+  out[1] = MNEMO_A;
+  out[2] = percent;
+  out[15] = calc_crc(out, 15);
+  out[16] = FRAME_MARKER;
+}
+
+/// Cover force command (trame A, mnemo=65).
+/// Flips bit 3 of byte[10]; all other bits are preserved from current_a10
+/// (the last raw byte[10] received from a trame A indication).
+inline void build_command_cover_force(bool state, uint8_t current_a10,
+                                      uint8_t out[CMD_FRAME_LEN]) {
+  memset(out, 0xFF, CMD_FRAME_LEN);
+  out[0] = FRAME_MARKER;
+  out[1] = MNEMO_A;
+  const uint8_t mask = (1 << 3);
+  out[10] = state ? (current_a10 | mask) : (current_a10 & ~mask);
+  out[15] = calc_crc(out, 15);
+  out[16] = FRAME_MARKER;
 }
 
 }  // namespace akeron

@@ -184,12 +184,20 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
 // ──────────────────────────────────────────────────────────────────────────────
 
 void AkeronComponent::on_subscribed_() {
-  // Immediately trigger a poll cycle so we get fresh data on connect
-  this->update();
+  // Delay the first poll if we're still in the early boot window (< 10 s).
+  // This prevents WiFi + BLE both hammering the RF front-end simultaneously,
+  // which can cause a brownout on boards with a weak power supply.
+  const uint32_t BOOT_DELAY_MS = 10000;
+  uint32_t now = millis();
+  uint32_t delay_ms = (now < BOOT_DELAY_MS) ? (BOOT_DELAY_MS - now) : 0;
+  if (delay_ms > 0) {
+    ESP_LOGD(TAG, "Delaying first poll by %u ms (boot guard)", delay_ms);
+  }
+  this->set_timeout("first_poll", delay_ms, [this]() { this->update(); });
 }
 
 void AkeronComponent::send_request_(uint8_t mnemo) {
-  if (!this->is_connected_()) return;
+  if (this->parent() == nullptr || this->char_handle_ == 0) return;
 
   uint8_t frame[REQUEST_LEN];
   build_request(mnemo, frame);
@@ -267,7 +275,8 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
 
     case MNEMO_S: {
       auto s = parse_trame_s(frame);
-      if (ph_setpoint_) ph_setpoint_->publish_state(s.ph_setpoint);
+      if (ph_setpoint_)        ph_setpoint_->publish_state(s.ph_setpoint);
+      if (ph_setpoint_number_) ph_setpoint_number_->publish_state(s.ph_setpoint);
       break;
     }
 
@@ -279,9 +288,12 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
 
     case MNEMO_A: {
       auto a = parse_trame_a(frame);
-      if (elx_production_) elx_production_->publish_state((float) a.elx_production);
+      this->raw_field_a10_ = a.raw_byte10;
+      if (elx_production_)        elx_production_->publish_state((float) a.elx_production);
+      if (elx_production_number_) elx_production_number_->publish_state((float) a.elx_production);
       if (boost_duration_) boost_duration_->publish_state((float) a.boost_duration);
       if (cover_active_)   cover_active_->publish_state(a.cover_active);
+      if (cover_force_switch_) cover_force_switch_->publish_state(a.cover_forced);
       if (flow_switch_)    flow_switch_->publish_state(a.flow_switch);
       if (boost_active_)   boost_active_->publish_state(a.boost_active);
       break;
@@ -308,6 +320,87 @@ void AkeronComponent::mark_unavailable_() {
   if (cover_active_)    cover_active_->publish_state(false);
   if (flow_switch_)     flow_switch_->publish_state(false);
   if (boost_active_)    boost_active_->publish_state(false);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Write commands
+// ──────────────────────────────────────────────────────────────────────────────
+
+void AkeronComponent::write_command_(const uint8_t *frame) {
+  // Guard 1: parent BLE client must be set and connected
+  if (this->parent() == nullptr) {
+    ESP_LOGE(TAG, "write_command_: parent BLE client is null");
+    return;
+  }
+  // Guard 2: characteristic handle must have been discovered
+  if (this->char_handle_ == 0) {
+    ESP_LOGE(TAG, "write_command_: characteristic handle not yet discovered");
+    return;
+  }
+  auto status = esp_ble_gattc_write_char(
+      this->parent()->get_gattc_if(),
+      this->parent()->get_conn_id(),
+      this->char_handle_,
+      CMD_FRAME_LEN,
+      const_cast<uint8_t *>(frame),
+      ESP_GATT_WRITE_TYPE_RSP,
+      ESP_GATT_AUTH_REQ_NONE);
+  if (status != ESP_GATT_OK) {
+    ESP_LOGW(TAG, "BLE write failed (status=%d)", status);
+  }
+}
+
+void AkeronComponent::trigger_post_write_poll_() {
+  // Wait 1 s for the Akeron to process the command, then re-poll.
+  this->set_timeout("post_write_poll", 1000, [this]() { this->update(); });
+}
+
+void AkeronComponent::write_ph_setpoint(float value) {
+  ESP_LOGD(TAG, "write_ph_setpoint: %.2f", value);
+  uint8_t frame[CMD_FRAME_LEN];
+  build_command_ph_setpoint(value, frame);
+  this->write_command_(frame);
+  this->trigger_post_write_poll_();
+}
+
+void AkeronComponent::write_elx_production(float value) {
+  auto percent = (uint8_t) value;
+  ESP_LOGD(TAG, "write_elx_production: %u%%", percent);
+  uint8_t frame[CMD_FRAME_LEN];
+  build_command_elx_production(percent, frame);
+  this->write_command_(frame);
+  this->trigger_post_write_poll_();
+}
+
+void AkeronComponent::write_cover_force(bool state) {
+  ESP_LOGD(TAG, "write_cover_force: %s", state ? "ON" : "OFF");
+  uint8_t frame[CMD_FRAME_LEN];
+  build_command_cover_force(state, this->raw_field_a10_, frame);
+  this->write_command_(frame);
+  this->trigger_post_write_poll_();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Number entity implementations
+// ──────────────────────────────────────────────────────────────────────────────
+
+void AkeronPhSetpointNumber::control(float value) {
+  this->parent_->write_ph_setpoint(value);
+  this->publish_state(value);  // optimistic update; confirmed by next trame S
+}
+
+void AkeronElxProductionNumber::control(float value) {
+  this->parent_->write_elx_production(value);
+  this->publish_state(value);  // optimistic update; confirmed by next trame A
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Switch entity implementation
+// ──────────────────────────────────────────────────────────────────────────────
+
+void AkeronCoverForceSwitch::write_state(bool state) {
+  this->parent_->write_cover_force(state);
+  this->publish_state(state);  // optimistic update; confirmed by next trame A
 }
 
 }  // namespace akeron

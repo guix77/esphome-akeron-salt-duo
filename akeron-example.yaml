@@ -34,13 +34,22 @@ external_components:
       type: local
       path: components
 
+# Stop BLE scanning once the device is connected.
+# continuous: false  → one scan burst on boot/reconnect, then stops.
+# active: false      → passive scan (no scan-request packets), saves RF power.
+# Without this, the BLE scanner runs non-stop alongside WiFi and causes heating.
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false
+    active: false
+
 ble_client:
   - mac_address: ${akeron_mac}
     id: akeron_ble
 
 akeron:
   ble_client_id: akeron_ble
-  update_interval: 30s
+  update_interval: 60s  # default 60s; reduce to 30s if you need faster updates
 
 sensor:
   - platform: akeron
@@ -73,8 +82,8 @@ binary_sensor:
     # --- Uncomment as needed ---
     # pumps_forced:
     #   name: "Pumps Forced"
-    # cover_active:
-    #   name: "Cover Active"
+    cover_active:
+      name: "Cover Active"
     # flow_switch:
     #   name: "Flow Switch"
 
@@ -86,3 +95,22 @@ text_sensor:
       name: "Regulator Alarm"
     warning:
       name: "Warning"
+
+# Writable controls — expose these to set values from Home Assistant
+# Note: if you use the number entities, the read-only sensor equivalents
+# (ph_setpoint sensor, elx_production sensor) are redundant — the number
+# entities also reflect the confirmed value received from the device.
+number:
+  - platform: akeron
+    ph_setpoint:
+      name: "pH Setpoint"
+    elx_production:
+      name: "Electrolysis Production"
+
+# Use this if your Akeron has no physical cover cable connected.
+# Turning it ON tells the Akeron the cover is closed (stops ELX).
+# Turning it OFF tells the Akeron the cover is open (resumes ELX).
+# switch:
+#   - platform: akeron
+#     cover_force:
+#       name: "Force Cover Mode"

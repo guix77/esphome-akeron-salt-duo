@@ -1,12 +1,15 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/number/number.h"
+#include "esphome/components/switch/switch.h"
 #include "akeron_protocol.h"
 
 #include <cstring>
@@ -18,9 +21,17 @@ namespace espbt = esphome::esp32_ble_tracker;
 
 static const char *const TAG = "akeron";
 
+// ── Forward declarations ──────────────────────────────────────────────────────
+class AkeronPhSetpointNumber;
+class AkeronElxProductionNumber;
+class AkeronCoverForceSwitch;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
 class AkeronComponent : public PollingComponent, public ble_client::BLEClientNode {
  public:
-  // ── Sensor setters (called from sensor.py to_code) ──────────────────────────
+  // ── Read-only sensor setters ─────────────────────────────────────────────────
   void set_ph(sensor::Sensor *s)            { ph_ = s; }
   void set_redox(sensor::Sensor *s)         { redox_ = s; }
   void set_temperature(sensor::Sensor *s)   { temperature_ = s; }
@@ -43,6 +54,16 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_alarm_regulator(text_sensor::TextSensor *s) { alarm_regulator_ = s; }
   void set_warning(text_sensor::TextSensor *s)         { warning_ = s; }
 
+  // ── Writable control setters ─────────────────────────────────────────────────
+  void set_ph_setpoint_number(AkeronPhSetpointNumber *n)    { ph_setpoint_number_ = n; }
+  void set_elx_production_number(AkeronElxProductionNumber *n) { elx_production_number_ = n; }
+  void set_cover_force_switch(AkeronCoverForceSwitch *s)    { cover_force_switch_ = s; }
+
+  // ── Write commands (called by number/switch control() / write_state()) ───────
+  void write_ph_setpoint(float value);
+  void write_elx_production(float value);
+  void write_cover_force(bool state);
+
   // ── ESPHome component lifecycle ──────────────────────────────────────────────
   void setup() override;
   void update() override;
@@ -63,15 +84,22 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   uint8_t rx_buf_[RX_BUF_SIZE]{};
   size_t  rx_len_{0};
 
+  // ── Last raw byte[10] from trame A (needed for cover_force command) ───────────
+  uint8_t raw_field_a10_{0xFF};
+
   // ── Internal methods ─────────────────────────────────────────────────────────
-  bool is_connected_() const { return this->char_handle_ != 0; }
+  bool is_connected_() {
+    return this->parent() != nullptr && this->char_handle_ != 0;
+  }
   void send_request_(uint8_t mnemo);
+  void write_command_(const uint8_t *frame);
+  void trigger_post_write_poll_();
   void on_subscribed_();
   void parse_buffer_();
   void dispatch_frame_(const uint8_t *frame);
   void mark_unavailable_();
 
-  // ── Sensors ──────────────────────────────────────────────────────────────────
+  // ── Read-only sensors ─────────────────────────────────────────────────────────
   sensor::Sensor *ph_{nullptr};
   sensor::Sensor *redox_{nullptr};
   sensor::Sensor *temperature_{nullptr};
@@ -93,6 +121,38 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   text_sensor::TextSensor *alarm_elx_{nullptr};
   text_sensor::TextSensor *alarm_regulator_{nullptr};
   text_sensor::TextSensor *warning_{nullptr};
+
+  // ── Writable controls ────────────────────────────────────────────────────────
+  AkeronPhSetpointNumber    *ph_setpoint_number_{nullptr};
+  AkeronElxProductionNumber *elx_production_number_{nullptr};
+  AkeronCoverForceSwitch    *cover_force_switch_{nullptr};
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Number entities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Writable pH setpoint (6.80–7.80, step 0.05).
+class AkeronPhSetpointNumber : public number::Number, public Parented<AkeronComponent> {
+ protected:
+  void control(float value) override;
+};
+
+/// Writable ELX production % (0–100, step 10).
+class AkeronElxProductionNumber : public number::Number, public Parented<AkeronComponent> {
+ protected:
+  void control(float value) override;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Switch entity
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cover force switch — tells the Akeron the pool cover is closed/open
+/// (for installations without a physical cover cable).
+class AkeronCoverForceSwitch : public switch_::Switch, public Parented<AkeronComponent> {
+ protected:
+  void write_state(bool state) override;
 };
 
 }  // namespace akeron

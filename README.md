@@ -129,6 +129,36 @@ All sensors are optional. Include only what your model supports.
 
 ---
 
+### `number: platform: akeron`
+
+These entities are **read-write**: they display the current value confirmed by
+the device and allow changing it from Home Assistant.
+
+| Key | Unit | Range | Step | Description |
+|---|---|---|---|---|
+| `ph_setpoint` | pH | 6.80–7.80 | 0.05 | Target pH setpoint |
+| `elx_production` | % | 0–100 | 10 | Electrolysis production level |
+
+> **Tip:** if you configure a `number` entity, the corresponding read-only
+> `sensor` entity (`ph_setpoint` sensor / `elx_production` sensor) is redundant
+> — both reflect the confirmed value from the device. Use one or the other.
+
+---
+
+### `switch: platform: akeron`
+
+| Key | Description |
+|---|---|
+| `cover_force` | Force the Akeron to treat the pool cover as closed (ON) or open (OFF) |
+
+The `cover_force` switch is useful for pools **without a physical cover cable**
+connected to the Akeron. When the cover is physically closed but the Akeron
+doesn't know it (because there is no cable), you can switch this ON to stop
+electrolysis. Switch it OFF when the cover is open and you want electrolysis
+to resume. The state is read back from the device after every poll cycle.
+
+---
+
 ## Which entities to enable per model
 
 | Entity | SALT | REGUL pH | REGUL3 | REGUL4 Rx |

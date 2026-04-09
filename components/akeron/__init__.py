@@ -5,7 +5,7 @@ from esphome.const import CONF_ID
 
 CODEOWNERS = ["@guix"]
 DEPENDENCIES = ["ble_client"]
-AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor"]
+AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "number", "switch"]
 
 akeron_ns = cg.esphome_ns.namespace("akeron")
 AkeronComponent = akeron_ns.class_(
@@ -21,7 +21,7 @@ CONFIG_SCHEMA = (
             cv.GenerateID(): cv.declare_id(AkeronComponent),
         }
     )
-    .extend(cv.polling_component_schema("30s"))
+    .extend(cv.polling_component_schema("60s"))
     .extend(ble_client.BLE_CLIENT_SCHEMA)
 )
 
