@@ -231,16 +231,7 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
 // ──────────────────────────────────────────────────────────────────────────────
 
 void AkeronComponent::on_subscribed_() {
-  // Delay the first poll if we're still in the early boot window (< 10 s).
-  // This prevents WiFi + BLE both hammering the RF front-end simultaneously,
-  // which can cause a brownout on boards with a weak power supply.
-  const uint32_t BOOT_DELAY_MS = 10000;
-  uint32_t now = millis();
-  uint32_t delay_ms = (now < BOOT_DELAY_MS) ? (BOOT_DELAY_MS - now) : 0;
-  if (delay_ms > 0) {
-    ESP_LOGD(TAG, "Delaying first poll by %u ms (boot guard)", delay_ms);
-  }
-  this->set_timeout("first_poll", delay_ms, [this]() { this->update(); });
+  this->update();
   // Arm the stale-data watchdog
   this->reset_watchdog_();
 }
@@ -408,21 +399,31 @@ void AkeronComponent::schedule_reconnect_() {
   if (!this->want_connection_ || this->parent() == nullptr) {
     return;
   }
+  ESP_LOGD(TAG, "Scheduling BLE reconnect in %u ms", this->reconnect_delay_ms_);
   this->set_timeout("reconnect", this->reconnect_delay_ms_, [this]() {
     this->begin_connection_attempt_();
   });
 }
 
 void AkeronComponent::begin_connection_attempt_() {
-  if (!this->want_connection_ || this->parent() == nullptr) {
+  if (!this->want_connection_) {
+    ESP_LOGD(TAG, "Skipping BLE connection attempt: want_connection_ is false");
+    return;
+  }
+  if (this->parent() == nullptr) {
+    ESP_LOGW(TAG, "Skipping BLE connection attempt: BLE parent is not ready yet");
     return;
   }
   this->disconnect_reason_ = DisconnectReason::NONE;
+  ESP_LOGD(TAG, "Launching BLE connection attempt");
   this->publish_connection_status_("Connecting");
   this->reset_connection_state_();
   this->parent()->set_enabled(true);
   if (this->ble_tracker_ != nullptr) {
+    ESP_LOGD(TAG, "Starting BLE scan for Akeron");
     this->ble_tracker_->start_scan();
+  } else {
+    ESP_LOGW(TAG, "BLE tracker is null; cannot start scan");
   }
 }
 

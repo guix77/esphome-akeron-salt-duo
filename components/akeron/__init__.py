@@ -23,7 +23,7 @@ CONFIG_SCHEMA = (
             cv.GenerateID(): cv.declare_id(AkeronComponent),
             cv.GenerateID(CONF_ESP32_BLE_ID): cv.use_id(esp32_ble_tracker.ESP32BLETracker),
             cv.Optional(
-                CONF_RECONNECT_DELAY, default="10s"
+                CONF_RECONNECT_DELAY, default="1min"
             ): cv.positive_time_period_milliseconds,
         }
     )
