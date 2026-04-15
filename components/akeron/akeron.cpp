@@ -13,6 +13,9 @@ namespace akeron {
 // ──────────────────────────────────────────────────────────────────────────────
 
 void AkeronComponent::setup() {
+  if (this->debug_switch_ != nullptr) {
+    this->debug_switch_->publish_state(this->debug_logging_enabled_);
+  }
   this->publish_connection_status_("Disconnected");
 }
 
@@ -40,6 +43,7 @@ void AkeronComponent::dump_config() {
   LOG_TEXT_SENSOR("  ", "Warning",           warning_);
   LOG_TEXT_SENSOR("  ", "Connection Status", connection_status_);
   LOG_SENSOR("  ", "Last Update", last_update_);
+  LOG_SWITCH("  ", "Debug Logs", debug_switch_);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -153,6 +157,11 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
     // Indication / notification received — buffer and parse
     case ESP_GATTC_NOTIFY_EVT: {
       if (param->notify.handle != this->char_handle_) break;
+
+      if (this->debug_logging_enabled_) {
+        auto hex = this->format_hex_(param->notify.value, param->notify.value_len);
+        ESP_LOGD(TAG, "Notify (%u bytes): %s", param->notify.value_len, hex.c_str());
+      }
 
       size_t avail = RX_BUF_SIZE - this->rx_len_;
       size_t copy  = std::min((size_t) param->notify.value_len, avail);
@@ -269,7 +278,11 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
     this->last_update_->publish_state((float) this->frame_count_);
   }
   this->reset_watchdog_();
-  ESP_LOGV(TAG, "Received frame mnemo=0x%02X (%c) count=%u", mnemo, mnemo, this->frame_count_);
+  if (this->debug_logging_enabled_) {
+    auto hex = this->format_hex_(frame, FRAME_LEN);
+    ESP_LOGD(TAG, "Received frame mnemo=0x%02X (%c) count=%u: %s", mnemo, mnemo,
+             this->frame_count_, hex.c_str());
+  }
 
   switch (mnemo) {
     case MNEMO_M: {
@@ -301,12 +314,6 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
     }
 
     case MNEMO_A: {
-      // Raw dump helps debug the boost_duration offset (known overlap issue with byte[2])
-      ESP_LOGD(TAG,
-               "Trame A raw: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-               frame[0], frame[1], frame[2], frame[3], frame[4], frame[5], frame[6],
-               frame[7], frame[8], frame[9], frame[10], frame[11], frame[12],
-               frame[13], frame[14], frame[15], frame[16]);
       auto a = parse_trame_a(frame);
       this->raw_field_a10_ = a.raw_byte10;
       if (elx_production_)        elx_production_->publish_state((float) a.elx_production);
@@ -369,6 +376,10 @@ void AkeronComponent::publish_connection_status_(const char *status) {
   if (this->connection_status_ != nullptr) {
     this->connection_status_->publish_state(status);
   }
+}
+
+std::string AkeronComponent::format_hex_(const uint8_t *data, size_t len) const {
+  return format_hex_pretty(data, len);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -450,6 +461,11 @@ void AkeronElxProductionNumber::control(float value) {
 void AkeronCoverForceSwitch::write_state(bool state) {
   this->parent_->write_cover_force(state);
   this->publish_state(state);  // optimistic update; confirmed by next trame A
+}
+
+void AkeronDebugSwitch::write_state(bool state) {
+  this->parent_->set_debug_logging_enabled(state);
+  this->publish_state(state);
 }
 
 }  // namespace akeron

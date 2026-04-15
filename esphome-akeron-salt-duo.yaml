@@ -18,6 +18,7 @@ esp32:
       CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "n"
 
 logger:
+  level: DEBUG
 
 api:
   encryption:
@@ -102,10 +103,14 @@ number:
     elx_production:
       name: Electrolysis Production
 
-# Use this if your Akeron has no physical cover cable connected.
-# Turning it ON tells the Akeron the cover is closed (stops ELX).
-# Turning it OFF tells the Akeron the cover is open (resumes ELX).
-# switch:
-#   - platform: akeron
-#     cover_force:
-#       name: Force Cover Mode
+switch:
+  - platform: akeron
+    debug_logs:
+      name: Debug Logs
+      entity_category: diagnostic
+
+    # Use this if your Akeron has no physical cover cable connected.
+    # Turning it ON tells the Akeron the cover is closed (stops ELX).
+    # Turning it OFF tells the Akeron the cover is open (resumes ELX).
+    # cover_force:
+    #   name: Force Cover Mode

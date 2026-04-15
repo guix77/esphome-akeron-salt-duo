@@ -25,6 +25,7 @@ static const char *const TAG = "akeron";
 class AkeronPhSetpointNumber;
 class AkeronElxProductionNumber;
 class AkeronCoverForceSwitch;
+class AkeronDebugSwitch;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
@@ -58,6 +59,8 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_ph_setpoint_number(AkeronPhSetpointNumber *n)       { ph_setpoint_number_ = n; }
   void set_elx_production_number(AkeronElxProductionNumber *n) { elx_production_number_ = n; }
   void set_cover_force_switch(AkeronCoverForceSwitch *s)       { cover_force_switch_ = s; }
+  void set_debug_switch(AkeronDebugSwitch *s)                  { debug_switch_ = s; }
+  void set_debug_logging_enabled(bool enabled)                 { debug_logging_enabled_ = enabled; }
 
   // ── Diagnostic sensor setters ────────────────────────────────────────────────
   void set_connection_status(text_sensor::TextSensor *s) { connection_status_ = s; }
@@ -107,6 +110,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void mark_unavailable_();
   void reset_watchdog_();
   void publish_connection_status_(const char *status);
+  std::string format_hex_(const uint8_t *data, size_t len) const;
 
   // ── Read-only sensors ─────────────────────────────────────────────────────────
   sensor::Sensor *ph_{nullptr};
@@ -135,10 +139,12 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   AkeronPhSetpointNumber    *ph_setpoint_number_{nullptr};
   AkeronElxProductionNumber *elx_production_number_{nullptr};
   AkeronCoverForceSwitch    *cover_force_switch_{nullptr};
+  AkeronDebugSwitch         *debug_switch_{nullptr};
 
   // ── Diagnostic sensors ────────────────────────────────────────────────────────
   text_sensor::TextSensor *connection_status_{nullptr};
   sensor::Sensor          *last_update_{nullptr};
+  bool                     debug_logging_enabled_{false};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +170,12 @@ class AkeronElxProductionNumber : public number::Number, public Parented<AkeronC
 /// Cover force switch — tells the Akeron the pool cover is closed/open
 /// (for installations without a physical cover cable).
 class AkeronCoverForceSwitch : public switch_::Switch, public Parented<AkeronComponent> {
+ protected:
+  void write_state(bool state) override;
+};
+
+/// Debug logs switch — enables verbose BLE frame logging on demand.
+class AkeronDebugSwitch : public switch_::Switch, public Parented<AkeronComponent> {
  protected:
   void write_state(bool state) override;
 };
