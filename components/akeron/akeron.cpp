@@ -31,6 +31,7 @@ void AkeronComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Service UUID : %s", SERVICE_UUID);
   ESP_LOGCONFIG(TAG, "  Char UUID    : %s", CHAR_UUID);
   ESP_LOGCONFIG(TAG, "  Reconnect delay: %u ms", this->reconnect_delay_ms_);
+  ESP_LOGCONFIG(TAG, "  Watchdog timeout: %u ms", this->watchdog_timeout_ms_);
   LOG_UPDATE_INTERVAL(this);
   LOG_SENSOR("  ", "pH",            ph_);
   LOG_SENSOR("  ", "Redox",         redox_);
@@ -72,6 +73,16 @@ void AkeronComponent::update() {
     ESP_LOGD(TAG, "update() called but not connected, skipping");
     return;
   }
+
+  this->publish_connection_status_("Connected");
+  if (this->watchdog_timeout_ms_ > 0 && this->last_notify_ms_ > 0 &&
+      millis() - this->last_notify_ms_ > this->watchdog_timeout_ms_) {
+    ESP_LOGW(TAG, "Watchdog: no valid trame for %u ms — forcing BLE reconnect",
+             this->watchdog_timeout_ms_);
+    this->force_reconnect_(DisconnectReason::WATCHDOG);
+    return;
+  }
+
   this->send_request_(MNEMO_M);
   this->set_timeout("req_s", 500,  [this]() { this->send_request_(MNEMO_S); });
   this->set_timeout("req_a", 1000, [this]() { this->send_request_(MNEMO_A); });
@@ -132,6 +143,7 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
       if (param->reg_for_notify.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "register_for_notify failed, status=%d",
                  param->reg_for_notify.status);
+        this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
 
@@ -213,6 +225,10 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
       this->publish_disconnect_reason_(this->disconnect_reason_);
       // Cancel pending watchdog — no point firing it after disconnect
       this->cancel_timeout("watchdog");
+      this->cancel_timeout("req_s");
+      this->cancel_timeout("req_a");
+      this->cancel_timeout("req_e");
+      this->cancel_timeout("post_write_poll");
       this->mark_unavailable_();
       if (this->parent() != nullptr) {
         this->parent()->set_enabled(false);
@@ -378,11 +394,14 @@ void AkeronComponent::mark_unavailable_() {
 }
 
 void AkeronComponent::reset_watchdog_() {
-  // If no valid trame is received for 5 minutes while supposedly connected,
-  // force a BLE disconnect so the ble_client reconnect cycle kicks in.
-  this->set_timeout("watchdog", 5 * 60 * 1000, [this]() {
+  if (this->watchdog_timeout_ms_ == 0) {
+    this->cancel_timeout("watchdog");
+    return;
+  }
+  this->set_timeout("watchdog", this->watchdog_timeout_ms_, [this]() {
     if (!this->is_connected_()) return;
-    ESP_LOGW(TAG, "Watchdog: no valid trame for 5 min — forcing BLE reconnect");
+    ESP_LOGW(TAG, "Watchdog: no valid trame for %u ms — forcing BLE reconnect",
+             this->watchdog_timeout_ms_);
     this->force_reconnect_(DisconnectReason::WATCHDOG);
   });
 }
@@ -430,6 +449,10 @@ void AkeronComponent::begin_connection_attempt_() {
 void AkeronComponent::force_reconnect_(DisconnectReason reason) {
   this->cancel_timeout("watchdog");
   this->cancel_timeout("reconnect");
+  this->cancel_timeout("req_s");
+  this->cancel_timeout("req_a");
+  this->cancel_timeout("req_e");
+  this->cancel_timeout("post_write_poll");
   this->disconnect_reason_ = reason;
   this->publish_connection_status_("Disconnected");
   this->publish_disconnect_reason_(reason);
@@ -456,6 +479,10 @@ void AkeronComponent::force_reconnect_(DisconnectReason reason) {
 }
 
 void AkeronComponent::publish_connection_status_(const char *status) {
+  if (this->last_connection_status_ == status) {
+    return;
+  }
+  this->last_connection_status_ = status;
   if (this->connection_status_ != nullptr) {
     this->connection_status_->publish_state(status);
   }

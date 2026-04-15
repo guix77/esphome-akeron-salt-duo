@@ -16,6 +16,7 @@ AkeronComponent = akeron_ns.class_(
 CONF_AKERON_ID = "akeron_id"
 CONF_ESP32_BLE_ID = "esp32_ble_id"
 CONF_RECONNECT_DELAY = "reconnect_delay"
+CONF_WATCHDOG_TIMEOUT = "watchdog_timeout"
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -24,6 +25,9 @@ CONFIG_SCHEMA = (
             cv.GenerateID(CONF_ESP32_BLE_ID): cv.use_id(esp32_ble_tracker.ESP32BLETracker),
             cv.Optional(
                 CONF_RECONNECT_DELAY, default="1min"
+            ): cv.positive_time_period_milliseconds,
+            cv.Optional(
+                CONF_WATCHDOG_TIMEOUT, default="5min"
             ): cv.positive_time_period_milliseconds,
         }
     )
@@ -39,3 +43,4 @@ async def to_code(config):
     ble_tracker = await cg.get_variable(config[CONF_ESP32_BLE_ID])
     cg.add(var.set_ble_tracker(ble_tracker))
     cg.add(var.set_reconnect_delay_ms(config[CONF_RECONNECT_DELAY]))
+    cg.add(var.set_watchdog_timeout_ms(config[CONF_WATCHDOG_TIMEOUT]))

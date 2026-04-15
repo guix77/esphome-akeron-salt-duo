@@ -51,6 +51,7 @@ akeron:
   esp32_ble_id: ble_hub
   ble_client_id: akeron_ble
   reconnect_delay: 1min
+  watchdog_timeout: 5min
   update_interval: 60s
 
 sensor:

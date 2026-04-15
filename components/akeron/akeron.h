@@ -72,6 +72,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_debug_logging_enabled(bool enabled)                 { debug_logging_enabled_ = enabled; }
   void set_ble_tracker(espbt::ESP32BLETracker *tracker)        { ble_tracker_ = tracker; }
   void set_reconnect_delay_ms(uint32_t delay_ms)               { reconnect_delay_ms_ = delay_ms; }
+  void set_watchdog_timeout_ms(uint32_t timeout_ms)            { watchdog_timeout_ms_ = timeout_ms; }
 
   // ── Diagnostic sensor setters ────────────────────────────────────────────────
   void set_connection_status(text_sensor::TextSensor *s)      { connection_status_ = s; }
@@ -160,8 +161,10 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   text_sensor::TextSensor *connection_status_{nullptr};
   sensor::Sensor          *seconds_since_last_frame_{nullptr};
   bool                     debug_logging_enabled_{false};
+  std::string              last_connection_status_{};
   bool                     want_connection_{true};
   uint32_t                 reconnect_delay_ms_{10000};
+  uint32_t                 watchdog_timeout_ms_{300000};
   uint32_t                 last_notify_ms_{0};
   DisconnectReason         disconnect_reason_{DisconnectReason::BOOT};
   espbt::ESP32BLETracker  *ble_tracker_{nullptr};
