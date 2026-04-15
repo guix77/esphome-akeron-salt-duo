@@ -38,13 +38,19 @@ external_components:
       path: components
 
 esp32_ble_tracker:
+  id: ble_hub
+  scan_parameters:
+    continuous: false
+    active: false
 
 ble_client:
   - mac_address: ${akeron_mac}
     id: akeron_ble
 
 akeron:
+  esp32_ble_id: ble_hub
   ble_client_id: akeron_ble
+  reconnect_delay: 10s
   update_interval: 60s
 
 sensor:
@@ -57,8 +63,8 @@ sensor:
       name: Electrolysis Production
     boost_duration:
       name: Boost Duration
-    last_update:
-      name: Frames Received
+    seconds_since_last_frame:
+      name: Seconds Since Last Frame
     # --- Uncomment for REGUL3 / REGUL4 models ---
     # temperature:
     #   name: Water Temperature
@@ -95,6 +101,8 @@ text_sensor:
       name: Warning
     connection_status:
       name: BLE Connection
+    last_disconnect_reason:
+      name: Last Disconnect Reason
 
 number:
   - platform: akeron

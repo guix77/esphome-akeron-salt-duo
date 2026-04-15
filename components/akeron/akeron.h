@@ -32,6 +32,14 @@ class AkeronDebugSwitch;
 // ─────────────────────────────────────────────────────────────────────────────
 class AkeronComponent : public PollingComponent, public ble_client::BLEClientNode {
  public:
+  enum class DisconnectReason : uint8_t {
+    NONE = 0,
+    BOOT,
+    LINK_LOSS,
+    WATCHDOG,
+    ERROR,
+  };
+
   // ── Read-only sensor setters ─────────────────────────────────────────────────
   void set_ph(sensor::Sensor *s)            { ph_ = s; }
   void set_redox(sensor::Sensor *s)         { redox_ = s; }
@@ -54,6 +62,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_alarm_elx(text_sensor::TextSensor *s)       { alarm_elx_ = s; }
   void set_alarm_regulator(text_sensor::TextSensor *s) { alarm_regulator_ = s; }
   void set_warning(text_sensor::TextSensor *s)         { warning_ = s; }
+  void set_last_disconnect_reason(text_sensor::TextSensor *s) { last_disconnect_reason_ = s; }
 
   // ── Writable control setters ─────────────────────────────────────────────────
   void set_ph_setpoint_number(AkeronPhSetpointNumber *n)       { ph_setpoint_number_ = n; }
@@ -61,10 +70,12 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_cover_force_switch(AkeronCoverForceSwitch *s)       { cover_force_switch_ = s; }
   void set_debug_switch(AkeronDebugSwitch *s)                  { debug_switch_ = s; }
   void set_debug_logging_enabled(bool enabled)                 { debug_logging_enabled_ = enabled; }
+  void set_ble_tracker(espbt::ESP32BLETracker *tracker)        { ble_tracker_ = tracker; }
+  void set_reconnect_delay_ms(uint32_t delay_ms)               { reconnect_delay_ms_ = delay_ms; }
 
   // ── Diagnostic sensor setters ────────────────────────────────────────────────
-  void set_connection_status(text_sensor::TextSensor *s) { connection_status_ = s; }
-  void set_last_update(sensor::Sensor *s)                { last_update_ = s; }
+  void set_connection_status(text_sensor::TextSensor *s)      { connection_status_ = s; }
+  void set_seconds_since_last_frame(sensor::Sensor *s)        { seconds_since_last_frame_ = s; }
 
   // ── Write commands (called by number/switch control() / write_state()) ───────
   void write_ph_setpoint(float value);
@@ -94,9 +105,6 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   // ── Last raw byte[10] from trame A (needed for cover_force command) ───────────
   uint8_t raw_field_a10_{0xFF};
 
-  // ── Diagnostics ───────────────────────────────────────────────────────────────
-  uint32_t frame_count_{0};  // total valid frames received since boot
-
   // ── Internal methods ─────────────────────────────────────────────────────────
   bool is_connected_() {
     return this->parent() != nullptr && this->char_handle_ != 0;
@@ -109,8 +117,14 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void dispatch_frame_(const uint8_t *frame);
   void mark_unavailable_();
   void reset_watchdog_();
+  void reset_connection_state_();
+  void schedule_reconnect_();
+  void begin_connection_attempt_();
+  void force_reconnect_(DisconnectReason reason);
   void publish_connection_status_(const char *status);
+  void publish_disconnect_reason_(DisconnectReason reason);
   std::string format_hex_(const uint8_t *data, size_t len) const;
+  const char *disconnect_reason_to_string_(DisconnectReason reason) const;
 
   // ── Read-only sensors ─────────────────────────────────────────────────────────
   sensor::Sensor *ph_{nullptr};
@@ -134,6 +148,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   text_sensor::TextSensor *alarm_elx_{nullptr};
   text_sensor::TextSensor *alarm_regulator_{nullptr};
   text_sensor::TextSensor *warning_{nullptr};
+  text_sensor::TextSensor *last_disconnect_reason_{nullptr};
 
   // ── Writable controls ────────────────────────────────────────────────────────
   AkeronPhSetpointNumber    *ph_setpoint_number_{nullptr};
@@ -143,8 +158,13 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
 
   // ── Diagnostic sensors ────────────────────────────────────────────────────────
   text_sensor::TextSensor *connection_status_{nullptr};
-  sensor::Sensor          *last_update_{nullptr};
+  sensor::Sensor          *seconds_since_last_frame_{nullptr};
   bool                     debug_logging_enabled_{false};
+  bool                     want_connection_{true};
+  uint32_t                 reconnect_delay_ms_{10000};
+  uint32_t                 last_notify_ms_{0};
+  DisconnectReason         disconnect_reason_{DisconnectReason::BOOT};
+  espbt::ESP32BLETracker  *ble_tracker_{nullptr};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

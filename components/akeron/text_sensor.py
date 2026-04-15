@@ -11,6 +11,7 @@ CONF_ALARM_ELX        = "alarm_elx"
 CONF_ALARM_REGULATOR  = "alarm_regulator"
 CONF_WARNING          = "warning"
 CONF_CONNECTION_STATUS = "connection_status"
+CONF_LAST_DISCONNECT_REASON = "last_disconnect_reason"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -27,6 +28,10 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_CONNECTION_STATUS): text_sensor.text_sensor_schema(
             icon="mdi:bluetooth-connect",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_LAST_DISCONNECT_REASON): text_sensor.text_sensor_schema(
+            icon="mdi:information-outline",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
     }
@@ -51,3 +56,7 @@ async def to_code(config):
     if CONF_CONNECTION_STATUS in config:
         s = await text_sensor.new_text_sensor(config[CONF_CONNECTION_STATUS])
         cg.add(parent.set_connection_status(s))
+
+    if CONF_LAST_DISCONNECT_REASON in config:
+        s = await text_sensor.new_text_sensor(config[CONF_LAST_DISCONNECT_REASON])
+        cg.add(parent.set_last_disconnect_reason(s))
