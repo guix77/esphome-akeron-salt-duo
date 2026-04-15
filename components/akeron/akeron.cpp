@@ -19,8 +19,9 @@ void AkeronComponent::setup() {
   if (this->parent() != nullptr) {
     this->parent()->set_enabled(false);
   }
-  this->publish_connection_status_("Disconnected");
+  this->publish_connection_status_("disconnected");
   this->publish_disconnect_reason_(this->disconnect_reason_);
+  this->set_internal_state_(InternalState::DISCONNECTED_IDLE);
   this->set_timeout("boot_connect", this->reconnect_delay_ms_, [this]() {
     this->begin_connection_attempt_();
   });
@@ -70,11 +71,10 @@ void AkeronComponent::update() {
   }
 
   if (!this->is_connected_()) {
-    ESP_LOGD(TAG, "update() called but not connected, skipping");
     return;
   }
 
-  this->publish_connection_status_("Connected");
+  this->publish_connection_status_("connected");
   if (this->watchdog_timeout_ms_ > 0 && this->last_notify_ms_ > 0 &&
       millis() - this->last_notify_ms_ > this->watchdog_timeout_ms_) {
     ESP_LOGW(TAG, "Watchdog: no valid trame for %u ms — forcing BLE reconnect",
@@ -101,14 +101,15 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
     // Connection opened — save remote BDA for later use
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status != ESP_GATT_OK) {
-        ESP_LOGW(TAG, "Connection failed, status=%d", param->open.status);
+        ESP_LOGW(TAG, "BLE open failed, status=%d", param->open.status);
         this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
-      ESP_LOGI(TAG, "Connected to Akeron BLE device");
+      ESP_LOGI(TAG, "Connected to Akeron BLE box");
       memcpy(this->remote_bda_, param->open.remote_bda, sizeof(esp_bd_addr_t));
       this->rx_len_ = 0;
-      this->publish_connection_status_("Connecting");
+      this->publish_connection_status_("connecting");
+      this->set_internal_state_(InternalState::CONNECTING);
       break;
     }
 
@@ -121,18 +122,20 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
           espbt::ESPBTUUID::from_raw(CHAR_UUID));
 
       if (chr == nullptr) {
-        ESP_LOGE(TAG, "Akeron characteristic not found — check UUIDs");
+        ESP_LOGE(TAG, "Required Akeron characteristics not found");
+        this->set_internal_state_(InternalState::ERROR);
         this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
 
       this->char_handle_ = chr->handle;
-      ESP_LOGD(TAG, "Found characteristic, handle=0x%04X", this->char_handle_);
 
       auto status = esp_ble_gattc_register_for_notify(
           gattc_if, this->remote_bda_, this->char_handle_);
       if (status != ESP_GATT_OK) {
-        ESP_LOGE(TAG, "esp_ble_gattc_register_for_notify failed, status=%d", status);
+        ESP_LOGW(TAG, "register_for_notify failed for 0x%04X, status=%d",
+                 this->char_handle_, status);
+        this->set_internal_state_(InternalState::ERROR);
         this->force_reconnect_(DisconnectReason::ERROR);
       }
       break;
@@ -141,8 +144,9 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
     // Registered for notify/indicate — write CCCD to enable indications (0x0002)
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
       if (param->reg_for_notify.status != ESP_GATT_OK) {
-        ESP_LOGE(TAG, "register_for_notify failed, status=%d",
-                 param->reg_for_notify.status);
+        ESP_LOGW(TAG, "register_for_notify failed for 0x%04X, status=%d",
+                 param->reg_for_notify.handle, param->reg_for_notify.status);
+        this->set_internal_state_(InternalState::ERROR);
         this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
@@ -159,7 +163,8 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
           this->char_handle_, cccd_uuid, &descr_elem, &count);
 
       if (ret != ESP_GATT_OK || count == 0) {
-        ESP_LOGE(TAG, "CCCD descriptor not found (status=%d)", ret);
+        ESP_LOGW(TAG, "CCCD not found for 0x%04X, status=%d", this->char_handle_, ret);
+        this->set_internal_state_(InternalState::ERROR);
         this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
@@ -177,15 +182,17 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
     // CCCD write complete — we are now subscribed
     case ESP_GATTC_WRITE_DESCR_EVT: {
       if (param->write.status != ESP_GATT_OK) {
-        ESP_LOGW(TAG, "Failed to write CCCD, status=%d", param->write.status);
+        ESP_LOGW(TAG, "CCCD write failed, status=%d", param->write.status);
+        this->set_internal_state_(InternalState::ERROR);
         this->force_reconnect_(DisconnectReason::ERROR);
         break;
       }
-      ESP_LOGI(TAG, "Subscribed to Akeron indications");
       this->node_state = espbt::ClientState::ESTABLISHED;
       this->last_notify_ms_ = millis();
-      this->publish_connection_status_("Connected");
+      this->publish_connection_status_("connected");
       this->publish_disconnect_reason_(DisconnectReason::NONE);
+      this->set_internal_state_(InternalState::CONNECTED_IDLE);
+      ESP_LOGI(TAG, "Akeron BLE session ready");
       this->on_subscribed_();
       break;
     }
@@ -197,7 +204,7 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
 
       if (this->debug_logging_enabled_) {
         auto hex = this->format_hex_(param->notify.value, param->notify.value_len);
-        ESP_LOGD(TAG, "Notify (%u bytes): %s", param->notify.value_len, hex.c_str());
+        ESP_LOGD(TAG, "notify (%u bytes): %s", param->notify.value_len, hex.c_str());
       }
 
       size_t avail = RX_BUF_SIZE - this->rx_len_;
@@ -216,13 +223,14 @@ void AkeronComponent::gattc_event_handler(esp_gattc_cb_event_t event,
 
     // Disconnected — mark sensors unavailable and reset state
     case ESP_GATTC_DISCONNECT_EVT: {
-      ESP_LOGW(TAG, "Disconnected from Akeron BLE device");
+      ESP_LOGW(TAG, "Disconnected from Akeron BLE box");
       if (this->disconnect_reason_ == DisconnectReason::NONE) {
         this->disconnect_reason_ = DisconnectReason::LINK_LOSS;
       }
       this->reset_connection_state_();
-      this->publish_connection_status_("Disconnected");
+      this->publish_connection_status_("disconnected");
       this->publish_disconnect_reason_(this->disconnect_reason_);
+      this->set_internal_state_(InternalState::DISCONNECTED_IDLE);
       // Cancel pending watchdog — no point firing it after disconnect
       this->cancel_timeout("watchdog");
       this->cancel_timeout("req_s");
@@ -312,10 +320,6 @@ void AkeronComponent::parse_buffer_() {
 void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
   uint8_t mnemo = frame[1];
   this->reset_watchdog_();
-  if (this->debug_logging_enabled_) {
-    auto hex = this->format_hex_(frame, FRAME_LEN);
-    ESP_LOGD(TAG, "Received frame mnemo=0x%02X (%c): %s", mnemo, mnemo, hex.c_str());
-  }
 
   switch (mnemo) {
     case MNEMO_M: {
@@ -360,14 +364,11 @@ void AkeronComponent::dispatch_frame_(const uint8_t *frame) {
     }
 
     default:
-      ESP_LOGD(TAG, "Unknown/unhandled frame mnemo=0x%02X", mnemo);
       break;
   }
 }
 
 void AkeronComponent::mark_unavailable_() {
-  ESP_LOGW(TAG, "BLE disconnected — marking all sensors unavailable");
-
   // Numeric sensors: publish NaN → HA shows "Unavailable"
   if (ph_)              ph_->publish_state(NAN);
   if (redox_)           redox_->publish_state(NAN);
@@ -418,31 +419,22 @@ void AkeronComponent::schedule_reconnect_() {
   if (!this->want_connection_ || this->parent() == nullptr) {
     return;
   }
-  ESP_LOGD(TAG, "Scheduling BLE reconnect in %u ms", this->reconnect_delay_ms_);
   this->set_timeout("reconnect", this->reconnect_delay_ms_, [this]() {
     this->begin_connection_attempt_();
   });
 }
 
 void AkeronComponent::begin_connection_attempt_() {
-  if (!this->want_connection_) {
-    ESP_LOGD(TAG, "Skipping BLE connection attempt: want_connection_ is false");
-    return;
-  }
-  if (this->parent() == nullptr) {
-    ESP_LOGW(TAG, "Skipping BLE connection attempt: BLE parent is not ready yet");
+  if (!this->want_connection_ || this->parent() == nullptr) {
     return;
   }
   this->disconnect_reason_ = DisconnectReason::NONE;
-  ESP_LOGD(TAG, "Launching BLE connection attempt");
-  this->publish_connection_status_("Connecting");
+  this->publish_connection_status_("connecting");
+  this->set_internal_state_(InternalState::CONNECTING);
   this->reset_connection_state_();
   this->parent()->set_enabled(true);
   if (this->ble_tracker_ != nullptr) {
-    ESP_LOGD(TAG, "Starting BLE scan for Akeron");
     this->ble_tracker_->start_scan();
-  } else {
-    ESP_LOGW(TAG, "BLE tracker is null; cannot start scan");
   }
 }
 
@@ -454,8 +446,10 @@ void AkeronComponent::force_reconnect_(DisconnectReason reason) {
   this->cancel_timeout("req_e");
   this->cancel_timeout("post_write_poll");
   this->disconnect_reason_ = reason;
-  this->publish_connection_status_("Disconnected");
+  this->publish_connection_status_("disconnected");
   this->publish_disconnect_reason_(reason);
+  this->set_internal_state_(reason == DisconnectReason::ERROR ? InternalState::ERROR
+                                                              : InternalState::DISCONNECTED_IDLE);
   this->mark_unavailable_();
   if (this->parent() == nullptr) {
     this->reset_connection_state_();
@@ -493,6 +487,10 @@ void AkeronComponent::publish_disconnect_reason_(DisconnectReason reason) {
   if (this->last_disconnect_reason_ != nullptr) {
     this->last_disconnect_reason_->publish_state(this->disconnect_reason_to_string_(reason));
   }
+}
+
+void AkeronComponent::set_internal_state_(InternalState state) {
+  this->internal_state_ = state;
 }
 
 std::string AkeronComponent::format_hex_(const uint8_t *data, size_t len) const {

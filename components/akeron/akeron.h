@@ -40,6 +40,13 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
     ERROR,
   };
 
+  enum class InternalState : uint8_t {
+    DISCONNECTED_IDLE = 0,
+    CONNECTING,
+    CONNECTED_IDLE,
+    ERROR,
+  };
+
   // ── Read-only sensor setters ─────────────────────────────────────────────────
   void set_ph(sensor::Sensor *s)            { ph_ = s; }
   void set_redox(sensor::Sensor *s)         { redox_ = s; }
@@ -124,6 +131,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void force_reconnect_(DisconnectReason reason);
   void publish_connection_status_(const char *status);
   void publish_disconnect_reason_(DisconnectReason reason);
+  void set_internal_state_(InternalState state);
   std::string format_hex_(const uint8_t *data, size_t len) const;
   const char *disconnect_reason_to_string_(DisconnectReason reason) const;
 
@@ -167,6 +175,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   uint32_t                 watchdog_timeout_ms_{300000};
   uint32_t                 last_notify_ms_{0};
   DisconnectReason         disconnect_reason_{DisconnectReason::BOOT};
+  InternalState            internal_state_{InternalState::DISCONNECTED_IDLE};
   espbt::ESP32BLETracker  *ble_tracker_{nullptr};
 };
 
