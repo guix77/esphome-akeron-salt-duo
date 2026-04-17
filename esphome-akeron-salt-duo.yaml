@@ -11,6 +11,9 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.0"
+      sram1_as_iram: true
     sdkconfig_options:
       # Run at 160 MHz instead of 240 MHz — reduces heat significantly.
       # BLE + WiFi still work fine at 160 MHz.
@@ -18,7 +21,7 @@ esp32:
       CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "n"
 
 logger:
-  level: DEBUG
+  level: INFO
 
 api:
   encryption:
@@ -40,6 +43,7 @@ external_components:
 esp32_ble_tracker:
   id: ble_hub
   scan_parameters:
+    duration: 10s
     continuous: false
     active: false
 
@@ -64,8 +68,6 @@ sensor:
       name: Electrolysis Production
     boost_duration:
       name: Boost Duration
-    seconds_since_last_frame:
-      name: Seconds Since Last Frame
     # --- Uncomment for REGUL3 / REGUL4 models ---
     # temperature:
     #   name: Water Temperature
@@ -112,14 +114,10 @@ number:
     elx_production:
       name: Electrolysis Production
 
-switch:
-  - platform: akeron
-    debug_logs:
-      name: Debug Logs
-      entity_category: diagnostic
-
-    # Use this if your Akeron has no physical cover cable connected.
-    # Turning it ON tells the Akeron the cover is closed (stops ELX).
-    # Turning it OFF tells the Akeron the cover is open (resumes ELX).
-    # cover_force:
-    #   name: Force Cover Mode
+# switch:
+#   - platform: akeron
+#     # Use this if your Akeron has no physical cover cable connected.
+#     # Turning it ON tells the Akeron the cover is closed (stops ELX).
+#     # Turning it OFF tells the Akeron the cover is open (resumes ELX).
+#     # cover_force:
+#     #   name: Force Cover Mode

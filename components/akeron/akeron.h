@@ -25,7 +25,6 @@ static const char *const TAG = "akeron";
 class AkeronPhSetpointNumber;
 class AkeronElxProductionNumber;
 class AkeronCoverForceSwitch;
-class AkeronDebugSwitch;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
@@ -75,15 +74,12 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void set_ph_setpoint_number(AkeronPhSetpointNumber *n)       { ph_setpoint_number_ = n; }
   void set_elx_production_number(AkeronElxProductionNumber *n) { elx_production_number_ = n; }
   void set_cover_force_switch(AkeronCoverForceSwitch *s)       { cover_force_switch_ = s; }
-  void set_debug_switch(AkeronDebugSwitch *s)                  { debug_switch_ = s; }
-  void set_debug_logging_enabled(bool enabled)                 { debug_logging_enabled_ = enabled; }
   void set_ble_tracker(espbt::ESP32BLETracker *tracker)        { ble_tracker_ = tracker; }
   void set_reconnect_delay_ms(uint32_t delay_ms)               { reconnect_delay_ms_ = delay_ms; }
   void set_watchdog_timeout_ms(uint32_t timeout_ms)            { watchdog_timeout_ms_ = timeout_ms; }
 
   // ── Diagnostic sensor setters ────────────────────────────────────────────────
   void set_connection_status(text_sensor::TextSensor *s)      { connection_status_ = s; }
-  void set_seconds_since_last_frame(sensor::Sensor *s)        { seconds_since_last_frame_ = s; }
 
   // ── Write commands (called by number/switch control() / write_state()) ───────
   void write_ph_setpoint(float value);
@@ -128,6 +124,7 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   void reset_connection_state_();
   void schedule_reconnect_();
   void begin_connection_attempt_();
+  void handle_connection_attempt_timeout_();
   void force_reconnect_(DisconnectReason reason);
   void publish_connection_status_(const char *status);
   void publish_disconnect_reason_(DisconnectReason reason);
@@ -163,14 +160,11 @@ class AkeronComponent : public PollingComponent, public ble_client::BLEClientNod
   AkeronPhSetpointNumber    *ph_setpoint_number_{nullptr};
   AkeronElxProductionNumber *elx_production_number_{nullptr};
   AkeronCoverForceSwitch    *cover_force_switch_{nullptr};
-  AkeronDebugSwitch         *debug_switch_{nullptr};
 
   // ── Diagnostic sensors ────────────────────────────────────────────────────────
   text_sensor::TextSensor *connection_status_{nullptr};
-  sensor::Sensor          *seconds_since_last_frame_{nullptr};
-  bool                     debug_logging_enabled_{false};
   std::string              last_connection_status_{};
-  bool                     want_connection_{true};
+  static const uint32_t    CONNECTION_ATTEMPT_TIMEOUT_MS = 15000;
   uint32_t                 reconnect_delay_ms_{10000};
   uint32_t                 watchdog_timeout_ms_{300000};
   uint32_t                 last_notify_ms_{0};
@@ -202,12 +196,6 @@ class AkeronElxProductionNumber : public number::Number, public Parented<AkeronC
 /// Cover force switch — tells the Akeron the pool cover is closed/open
 /// (for installations without a physical cover cable).
 class AkeronCoverForceSwitch : public switch_::Switch, public Parented<AkeronComponent> {
- protected:
-  void write_state(bool state) override;
-};
-
-/// Debug logs switch — enables verbose BLE frame logging on demand.
-class AkeronDebugSwitch : public switch_::Switch, public Parented<AkeronComponent> {
  protected:
   void write_state(bool state) override;
 };

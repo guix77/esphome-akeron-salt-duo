@@ -23,7 +23,6 @@ CONF_PH_SETPOINT    = "ph_setpoint"
 CONF_REDOX_SETPOINT = "redox_setpoint"
 CONF_ELX_PRODUCTION = "elx_production"
 CONF_BOOST_DURATION = "boost_duration"
-CONF_SECONDS_SINCE_LAST_FRAME = "seconds_since_last_frame"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -78,13 +77,6 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:timer-outline",
         ),
-        cv.Optional(CONF_SECONDS_SINCE_LAST_FRAME): sensor.sensor_schema(
-            unit_of_measurement="s",
-            accuracy_decimals=0,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-            icon="mdi:timer-outline",
-            state_class=STATE_CLASS_MEASUREMENT,
-        ),
     }
 )
 
@@ -123,7 +115,3 @@ async def to_code(config):
     if CONF_BOOST_DURATION in config:
         s = await sensor.new_sensor(config[CONF_BOOST_DURATION])
         cg.add(parent.set_boost_duration(s))
-
-    if CONF_SECONDS_SINCE_LAST_FRAME in config:
-        s = await sensor.new_sensor(config[CONF_SECONDS_SINCE_LAST_FRAME])
-        cg.add(parent.set_seconds_since_last_frame(s))
